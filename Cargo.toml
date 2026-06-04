@@ -1,0 +1,9 @@
+[package]
+name = "ternary-sandbox"
+version = "0.1.0"
+edition = "2021"
+description = "A safe sandbox for running ternary agent experiments — configurable environments, repeatable seeds, and result capture"
+license = "MIT"
+repository = "https://github.com/SuperInstance/ternary-sandbox"
+
+[dev-dependencies]
