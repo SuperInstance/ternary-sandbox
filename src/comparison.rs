@@ -95,6 +95,7 @@ impl Comparison {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{EnvironmentBuilder, SandboxBuilder};
 
     #[test]
     fn comparison_runs_both() {
