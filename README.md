@@ -137,3 +137,11 @@ cargo test
 ## License
 
 MIT
+
+## See Also
+- **ternary-experiment** — related
+- **ternary-fitness** — related
+- **ternary-benchmark** — related
+- **ternary-agent** — related
+- **ternary-validation** — related
+
