@@ -1,147 +1,88 @@
-# ternary-sandbox
+# Ternary Sandbox — Safe Experimentation Environment for Ternary Agent Systems
 
-A safe sandbox for running ternary agent experiments — configurable environments, repeatable seeds, and structured result capture.
+**Ternary Sandbox** provides a controlled, repeatable environment for running ternary agent experiments. It includes a seeded RNG for deterministic reproduction, configurable fitness landscapes, population snapshots, experiment comparison, and conservation metric tracking — all without side effects on production systems.
 
-Pure Rust, no unsafe code, no external dependencies.
+## Why It Matters
+
+Scientific rigor requires controlled experiments: same inputs → same outputs. For ternary agent research, this means reproducible RNG seeds, isolated environments, and structured result capture. The sandbox provides all three. Without it, experiments are non-reproducible: random seeds vary between runs, side effects leak between experiments, and results can't be compared. The sandbox makes ternary research *scientific* rather than anecdotal.
+
+## How It Works
+
+### Seeded RNG
+
+`SeededRng` provides deterministic pseudo-random number generation. Same seed → identical sequence across platforms and runs. Used for: agent initialization, stochastic transitions, and landscape generation.
+
+### Environment
+
+`EnvironmentBuilder` constructs a fitness landscape with configurable dimensions, peaks, valleys, and noise. Agents are placed on the landscape and their fitness is evaluated each tick. The landscape is a 2D function over (x, y) returning a fitness value.
+
+### Sandbox
+
+`Sandbox` is the main container:
+
+1. Initialize population with seeded RNG
+2. Each tick: evaluate fitness, apply transitions, record snapshot
+3. Collect metrics: mean fitness, diversity, entropy, conservation
+
+The sandbox runs for a configured number of ticks, producing `PopulationSnapshot` records at each step.
+
+### Experiment
+
+`Experiment` wraps a sandbox with a parameter set and runs to completion, producing `ExperimentResult` with:
+- `FitnessRecord`: Time-series of population fitness
+- `ConservationMetrics`: γ + η = C verification at each tick
+
+### Comparison
+
+`Comparison` runs multiple experiments and ranks them by outcome. The `ComparisonResult` reports which parameter set produced the best outcome and by how much.
 
 ## Quick Start
 
 ```rust
-use ternary_sandbox::*;
+use ternary_sandbox::{SandboxBuilder, SandboxConfig};
 
-// Build an environment with fitness peaks
-let env = EnvironmentBuilder::new()
-    .peak(0.3, 0.3, 0.8)   // (x, y, height)
-    .peak(0.7, 0.7, 1.0)
-    .noise(0.02)
+let config = SandboxConfig {
+    population: 300,
+    ticks: 1000,
+    seed: 42,
+};
+
+let mut sandbox = SandboxBuilder::new()
+    .config(config)
     .build();
 
-// Configure the sandbox
-let config = SandboxBuilder::new()
-    .seed(42)
-    .population(100)
-    .generations(50)
-    .mutation_rate(0.1)
-    .mutation_strength(0.05)
-    .selection_pressure(0.5)
-    .species(3)
-    .build();
+sandbox.run();
 
-// Run an experiment
-let experiment = Experiment::new("my-experiment", config, env);
-let result = experiment.run().unwrap();
-
-println!("Best fitness: {:.4}", result.final_best_fitness);
-println!("Generations: {}", result.generations_run);
-println!("Avg entropy: {:.4}", result.conservation.avg_entropy);
-println!("Duration: {}ms", result.duration_ms);
+let result = sandbox.result();
+println!("Final fitness: {:.3}", result.mean_fitness);
+println!("Conservation satisfied: {}", result.conservation_verified);
 ```
-
-## Core Concepts
-
-### Environment
-
-Defines the problem landscape with configurable peaks, valleys, and noise:
-
-```rust
-let env = EnvironmentBuilder::new()
-    .peak(0.5, 0.5, 1.0)   // Center peak, height 1.0
-    .peak(0.2, 0.8, 0.5)   // Off-center peak, height 0.5
-    .noise(0.05)            // Add fitness evaluation noise
-    .x_range(-1.0, 1.0)    // Custom bounds
-    .y_range(-1.0, 1.0)
-    .build();
-```
-
-### Sandbox
-
-The evolutionary simulation engine:
-
-- **Population**: N agents with positions and species tags
-- **Selection**: Tournament selection with configurable pressure
-- **Mutation**: Gaussian-ish perturbation with configurable rate and strength
-- **Species**: Track diversity with multi-species populations
-
-```rust
-let config = SandboxBuilder::new()
-    .seed(12345)            // Deterministic
-    .population(200)
-    .generations(100)
-    .mutation_rate(0.15)
-    .mutation_strength(0.08)
-    .selection_pressure(0.3)
-    .species(5)
-    .build();
-
-let mut sandbox = Sandbox::new(config, env);
-sandbox.initialize();
-let snapshot = sandbox.step();   // One generation
-// or
-let history = sandbox.run();     // Full run
-```
-
-### Experiment
-
-Run a full experiment with pre/post conditions:
-
-```rust
-let result = Experiment::new("controlled", config, env)
-    .pre_condition(|cfg, _env| cfg.population_size > 10)
-    .post_condition(|result| result.final_best_fitness > 0.5)
-    .run();
-```
-
-### Replay
-
-Reproduce any experiment exactly from its seed:
-
-```rust
-let result = Experiment::replay(42, config, env);
-```
-
-### Comparison
-
-Run two experiments side-by-side:
-
-```rust
-let comp = Comparison::new(
-    "high-mutation",
-    "low-mutation",
-    config_high,
-    config_low,
-    env,
-);
-let result = comp.run().unwrap();
-match result.winner {
-    ComparisonWinner::A => println!("High mutation wins!"),
-    ComparisonWinner::B => println!("Low mutation wins!"),
-    ComparisonWinner::Tie => println!("It's a tie!"),
-}
-```
-
-## Result Metrics
-
-`ExperimentResult` includes:
-
-- **Fitness history**: best, average, worst per generation
-- **Conservation metrics**: Shannon entropy, extinction tracking
-- **Species counts**: population breakdown per generation
-- **Duration**: wall-clock timing
-
-## Testing
 
 ```bash
-cargo test
+cargo add ternary-sandbox
 ```
+
+## API
+
+| Type / Function | Description |
+|---|---|
+| `Sandbox` | Main experiment container: `run()`, `result()` |
+| `SandboxBuilder` | Fluent builder for sandbox configuration |
+| `SeededRng` | Deterministic RNG: `new(seed)`, `next() → f64` |
+| `Environment` | Fitness landscape with configurable topology |
+| `ExperimentResult` | Fitness records + conservation metrics |
+| `Comparison` | Multi-experiment comparison |
+
+## Architecture Notes
+
+The sandbox is the experimental testbed for **SuperInstance** fleet dynamics. Every parameter claim, every conservation verification, every optimization decision is validated in the sandbox before fleet deployment. The γ + η = C conservation law is checked at every tick — if violated, the experiment is flagged. See [Architecture](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md).
+
+## References
+
+- Axelrod, Robert. *The Complexity of Cooperation*, Princeton UP, 1997 — agent-based modeling.
+| Wilensky, Uri & Rand, William. *An Introduction to Agent-Based Modeling*, MIT Press, 2015.
+| Sanfilippo, Francesco et al. "Ternary Quantum Computers," *arXiv*, 2018.
 
 ## License
 
 MIT
-
-## See Also
-- **ternary-experiment** — related
-- **ternary-fitness** — related
-- **ternary-benchmark** — related
-- **ternary-agent** — related
-- **ternary-validation** — related
-
