@@ -1,101 +1,148 @@
-# Ternary Sandbox — Safe Experimentation Environment for Ternary Agent Systems
+# ternary-sandbox
 
-**Ternary Sandbox** provides a controlled, repeatable environment for running ternary agent experiments. It includes a seeded RNG for deterministic reproduction, configurable fitness landscapes, population snapshots, experiment comparison, and conservation metric tracking — all without side effects on production systems.
+A safe sandbox for **evolutionary agent experiments** with configurable fitness landscapes, deterministic seeded RNG, structured result capture, and side-by-side comparison. Agents evolve positions on a 2D landscape using tournament selection, mutation, and multi-species dynamics.
 
 ## Why It Matters
 
-Scientific rigor requires controlled experiments: same inputs → same outputs. For ternary agent research, this means reproducible RNG seeds, isolated environments, and structured result capture. The sandbox provides all three. Without it, experiments are non-reproducible: random seeds vary between runs, side effects leak between experiments, and results can't be compared. The sandbox makes ternary research *scientific* rather than anecdotal.
+Validating ternary agent strategies requires reproducible experimentation. Real-world deployments can't be tested blindly — you need a controlled environment where you can:
+
+1. **Replay exactly** — same seed → same result, every time
+2. **Measure conservation** — Shannon entropy of species diversity across generations
+3. **Compare configurations** — run A vs B with automatic winner selection
+4. **Enforce constraints** — pre/post-conditions abort invalid experiments
+
+The sandbox provides all four, using a xoshiro256** PRNG for deterministic randomness and a multi-peak fitness landscape with optional Gaussian noise.
 
 ## How It Works
 
-### Seeded RNG
+### Fitness Landscape
 
-`SeededRng` provides deterministic pseudo-random number generation. Same seed → identical sequence across platforms and runs. Used for: agent initialization, stochastic transitions, and landscape generation.
+The landscape is a sum of radial basis functions (one per peak):
 
-### Environment
+```
+f(x, y) = maxᵢ  hᵢ / (1 + 10 · ‖(x,y) - (xᵢ,yᵢ)‖)
+```
 
-`EnvironmentBuilder` constructs a fitness landscape with configurable dimensions, peaks, valleys, and noise. Agents are placed on the landscape and their fitness is evaluated each tick. The landscape is a 2D function over (x, y) returning a fitness value.
+where each peak *i* has position `(xᵢ, yᵢ)` and height `hᵢ`. With noise level `σ > 0`:
 
-### Sandbox
+```
+f̃(x, y) = max(0, f(x,y) + U(-σ, σ))
+```
 
-`Sandbox` is the main container:
+**Complexity:** O(P) per evaluation, where P = number of peaks.
 
-1. Initialize population with seeded RNG
-2. Each tick: evaluate fitness, apply transitions, record snapshot
-3. Collect metrics: mean fitness, diversity, entropy, conservation
+### Tournament Selection
 
-The sandbox runs for a configured number of ticks, producing `PopulationSnapshot` records at each step.
+Each generation, parents are selected via tournament of size *k*:
 
-### Experiment
+```
+k = max(2, ⌊population · selection_pressure⌋)
+```
 
-`Experiment` wraps a sandbox with a parameter set and runs to completion, producing `ExperimentResult` with:
-- `FitnessRecord`: Time-series of population fitness
-- `ConservationMetrics`: γ + η = C verification at each tick
+*k* random agents compete; the fittest becomes a parent. Selection pressure ∈ [0, 1] controls how aggressively the best agents dominate.
+
+**Complexity:** O(k) per selection, O(N·k) per generation.
+
+### Mutation
+
+Each child is mutated with probability `mutation_rate`:
+
+```
+x' = clamp(x + U(-s, s), x_min, x_max)
+y' = clamp(y + U(-s, s), y_min, y_max)
+```
+
+where *s* = `mutation_strength` (bounded to landscape range).
+
+### Species Diversity and Shannon Entropy
+
+Each agent belongs to one of *S* species. Per-generation entropy:
+
+```
+H(g) = - Σᵢ pᵢ · ln(pᵢ)   where pᵢ = count(species_i) / N
+```
+
+`H = ln(S)` is maximum diversity (uniform); `H = 0` is monoculture (one species dominant). The sandbox tracks entropy history, average, minimum, and extinction events.
+
+### Deterministic PRNG (xoshiro256**)
+
+State initialization via SplitMix64:
+
+```
+s₀ = seed
+sᵢ₊₁ = sᵢ + 0x9e3779b97f4a7c15
+state[j] = splitmix64(sⱼ)
+```
+
+Each `next_u64()` rotates and scrambles state. Period: 2²⁵⁶ − 1.
+
+**Complexity:** O(1) per random draw.
+
+### Experiment Lifecycle
+
+```
+pre_condition(config, env) → run sandbox → post_condition(result)
+```
+
+Pre/post-conditions are closures that return `bool`. Failure aborts with an error.
 
 ### Comparison
 
-`Comparison` runs multiple experiments and ranks them by outcome. The `ComparisonResult` reports which parameter set produced the best outcome and by how much.
+Two experiments run independently; results compared by:
+
+- **Primary:** `fitness_diff = final_best_A - final_best_B`
+- **Tiebreaker:** `entropy_diff = avg_entropy_A - avg_entropy_B`
+- **Speed:** `faster_ms = duration_A - duration_B`
+
+Winner: A if `fitness_diff > 0`; B if `< 0`; tiebreaker on entropy if equal.
 
 ## Quick Start
 
 ```rust
-use ternary_sandbox::{SandboxBuilder, SandboxConfig};
+use ternary_sandbox::{SandboxBuilder, EnvironmentBuilder, Experiment};
 
-let config = SandboxConfig {
-    population: 300,
-    ticks: 1000,
-    seed: 42,
-};
-
-let mut sandbox = SandboxBuilder::new()
-    .config(config)
+let config = SandboxBuilder::new()
+    .seed(42)
+    .generations(50)
+    .population(100)
+    .mutation_rate(0.1)
     .build();
 
-sandbox.run();
+let env = EnvironmentBuilder::new()
+    .peak(0.5, 0.5, 1.0)
+    .noise(0.01)
+    .build();
 
-let result = sandbox.result();
-println!("Final fitness: {:.3}", result.mean_fitness);
-println!("Conservation satisfied: {}", result.conservation_verified);
-```
+let result = Experiment::new("baseline", config, env)
+    .run()
+    .expect("experiment succeeds");
 
-```bash
-cargo add ternary-sandbox
+assert_eq!(result.generations_run, 50);
+assert!(result.conservation.avg_entropy > 0.0);
 ```
 
 ## API
 
-| Type / Function | Description |
-|---|---|
-| `Sandbox` | Main experiment container: `run()`, `result()` |
-| `SandboxBuilder` | Fluent builder for sandbox configuration |
-| `SeededRng` | Deterministic RNG: `new(seed)`, `next() → f64` |
-| `Environment` | Fitness landscape with configurable topology |
-| `ExperimentResult` | Fitness records + conservation metrics |
-| `Comparison` | Multi-experiment comparison |
+| Type | Key Methods |
+|------|-------------|
+| `Sandbox` | `initialize()`, `step()`, `run()` |
+| `SandboxBuilder` | `.seed()`, `.population()`, `.generations()`, `.mutation_rate()` |
+| `Environment` | `evaluate(x,y,rng)`, `evaluate_clean(x,y)`, `sample_grid(res)` |
+| `EnvironmentBuilder` | `.peak(x,y,h)`, `.noise(σ)`, `.x_range()`, `.y_range()` |
+| `Experiment` | `.run()`, `.pre_condition(f)`, `.post_condition(f)`, `::replay(seed, config, env)` |
+| `Comparison` | `.run()` → `ComparisonResult` |
+| `SeededRng` | `next_u64()`, `next_f64()`, `next_range(lo,hi)`, `next_int(lo,hi)` |
 
 ## Architecture Notes
 
-The sandbox is the experimental testbed for **SuperInstance** fleet dynamics. Every parameter claim, every conservation verification, every optimization decision is validated in the sandbox before fleet deployment. The γ + η = C conservation law is checked at every tick — if violated, the experiment is flagged. See [Architecture](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md).
+The **γ + η = C** invariant is central to the sandbox. *Generation* (γ) is the evolutionary process — selection, mutation, reproduction producing new agent distributions. *Entropy* (η) is the Shannon entropy of species diversity (`ConservationMetrics`). *Conservation* (C) is the invariant that species counts always sum to `population_size` — no agent is created or destroyed, only transformed. Extinction events (η → 0 for a species) signal that C is being maintained by removing diversity rather than reducing population.
 
 ## References
 
-- Axelrod, Robert. *The Complexity of Cooperation*, Princeton UP, 1997 — agent-based modeling.
-| Wilensky, Uri & Rand, William. *An Introduction to Agent-Based Modeling*, MIT Press, 2015.
-| Sanfilippo, Francesco et al. "Ternary Quantum Computers," *arXiv*, 2018.
-
-
-
-## Complexity Summary
-
-| Operation | Time | Notes |
-|---|---|---|
-| SeededRng::next() | O(1) | Single multiply-add |
-| Sandbox run (N agents, T ticks) | O(N × T) | Per-agent per-tick evaluation |
-| Fitness evaluation | O(N) | Landscape function per agent |
-| Conservation check | O(N) | Sum and compare |
-| Experiment comparison | O(E × N × T) | E experiments |
-
-The sandbox is designed for reproducibility: identical seeds produce identical results across platforms, enabling rigorous A/B comparison of parameter configurations.
+- **Tournament selection:** Blickle, T. & Thiele, L. "A Comparison of Selection Schemes" (1995)
+- **xoshiro256:** Blackman, D. & Vigna, S. "Scrambled Linear Pseudorandom Number Generators" (2019)
+- **Shannon entropy in ecology:** Shannon, C. E. "A Mathematical Theory of Communication" (1948)
+- **Evolutionary dynamics:** Nowak, M. *Evolutionary Dynamics* (2006)
 
 ## License
 
