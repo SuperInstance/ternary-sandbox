@@ -83,6 +83,20 @@ The sandbox is the experimental testbed for **SuperInstance** fleet dynamics. Ev
 | Wilensky, Uri & Rand, William. *An Introduction to Agent-Based Modeling*, MIT Press, 2015.
 | Sanfilippo, Francesco et al. "Ternary Quantum Computers," *arXiv*, 2018.
 
+
+
+## Complexity Summary
+
+| Operation | Time | Notes |
+|---|---|---|
+| SeededRng::next() | O(1) | Single multiply-add |
+| Sandbox run (N agents, T ticks) | O(N × T) | Per-agent per-tick evaluation |
+| Fitness evaluation | O(N) | Landscape function per agent |
+| Conservation check | O(N) | Sum and compare |
+| Experiment comparison | O(E × N × T) | E experiments |
+
+The sandbox is designed for reproducibility: identical seeds produce identical results across platforms, enabling rigorous A/B comparison of parameter configurations.
+
 ## License
 
 MIT
